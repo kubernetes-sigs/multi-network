@@ -1,0 +1,11 @@
+apiVersion: multinetwork.networking.k8s.io/v1alpha1
+kind: PodNetwork
+metadata:
+  name: my-dummy-network
+spec:
+  provider: podnetwork.example.com
+  enabled: true
+  parameters:
+    # This tells the dranet provider that any interface
+    # named "dummy0" on a node belongs to this PodNetwork.
+    name: "dummy0"
