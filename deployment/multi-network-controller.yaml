@@ -1,0 +1,86 @@
+# Copyright 2026 The Kubernetes Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: multi-network-controller-cluster-role
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["multinetwork.networking.x-k8s.io"]
+  resources: ["podnetworkkinds"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["multinetwork.networking.x-k8s.io"]
+  resources: ["podnetworkkinds/status"]
+  verbs: ["update"]
+- apiGroups: ["authorization.k8s.io"]
+  resources: ["selfsubjectrulesreviews"]
+  verbs: ["create"]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: multi-network-controller-service-account
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: multi-network-controller-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: multi-network-controller-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: multi-network-controller-service-account
+  namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multi-network-controller
+  labels:
+    app: multi-network-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multi-network-controller
+  template:
+    metadata:
+      labels:
+        app: multi-network-controller
+    spec:
+      serviceAccountName: multi-network-controller-service-account
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+      - name: multi-network-controller
+        image: ghcr.io/kubernetes-sigs/multi-network-controller:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        command:
+        - ./multi-network-controller
+        args:
+        - "run"
