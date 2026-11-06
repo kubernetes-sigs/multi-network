@@ -97,6 +97,8 @@ func (pnkr *PodNetworkKindReconciler) Reconcile(ctx context.Context, podNetworkK
 	return nil
 }
 
+// findResourceType returns the plural resource name for a group and kind.
+// It checks CRDs first, then falls back to discovery for built-in resources.
 func (pnkr *PodNetworkKindReconciler) findResourceType(group, kind string) (string, bool, error) {
 	objs, err := pnkr.customResourceDefinitionIndexer.ByIndex(
 		groupKindCustomResourceDefinitionIndex,
@@ -120,6 +122,7 @@ func (pnkr *PodNetworkKindReconciler) findResourceType(group, kind string) (stri
 		return crd.Spec.Names.Plural, true, nil
 	}
 
+	// Fall back to discovery for built-in resources as CRDs were not found.
 	if pnkr.clientset != nil && pnkr.clientset.Discovery() != nil {
 		_, resourceLists, err := pnkr.clientset.Discovery().ServerGroupsAndResources()
 		if err != nil {

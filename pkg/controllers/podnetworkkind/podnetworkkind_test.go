@@ -249,43 +249,6 @@ func TestEventHandlers(t *testing.T) {
 			expectedPodNetworkKindNames: []string{"my-network-kind", "my-network-kind"},
 		},
 		{
-			name: "update CustomResourceDefinition enqueues both old and new names",
-			initialPodNetworkKindObjects: []runtime.Object{
-				&v1alpha1.PodNetworkKind{
-					ObjectMeta: metav1.ObjectMeta{Name: "old-pnk"},
-					Spec: v1alpha1.PodNetworkKindSpec{
-						ImplementationType: metav1.GroupKind{Group: "old.example.com", Kind: "OldNetwork"},
-					},
-				},
-				&v1alpha1.PodNetworkKind{
-					ObjectMeta: metav1.ObjectMeta{Name: "new-pnk"},
-					Spec: v1alpha1.PodNetworkKindSpec{
-						ImplementationType: metav1.GroupKind{Group: "new.example.com", Kind: "NewNetwork"},
-					},
-				},
-			},
-			initialCRDObjects: []runtime.Object{
-				&apiextensionsv1.CustomResourceDefinition{
-					ObjectMeta: metav1.ObjectMeta{Name: "mynetworks.example.com"},
-					Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-						Group: "old.example.com",
-						Names: apiextensionsv1.CustomResourceDefinitionNames{Kind: "OldNetwork"},
-					},
-				},
-			},
-			initialExpectedPodNetworkKindNames: []string{"old-pnk", "new-pnk"},
-			updateObjects: []object{
-				&apiextensionsv1.CustomResourceDefinition{
-					ObjectMeta: metav1.ObjectMeta{Name: "mynetworks.example.com"},
-					Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-						Group: "new.example.com",
-						Names: apiextensionsv1.CustomResourceDefinitionNames{Kind: "NewNetwork"},
-					},
-				},
-			},
-			expectedPodNetworkKindNames: []string{"old-pnk", "new-pnk", "old-pnk", "new-pnk"},
-		},
-		{
 			name: "multiple initial PodNetworkKinds",
 			initialPodNetworkKindObjects: []runtime.Object{
 				&v1alpha1.PodNetworkKind{ObjectMeta: metav1.ObjectMeta{Name: "nk-a"}},
@@ -313,40 +276,6 @@ func TestEventHandlers(t *testing.T) {
 				},
 			},
 			expectedPodNetworkKindNames: []string{"my-network-kind"},
-		},
-		{
-			name: "update CustomResourceDefinition without GroupKind change enqueues name",
-			initialPodNetworkKindObjects: []runtime.Object{
-				&v1alpha1.PodNetworkKind{
-					ObjectMeta: metav1.ObjectMeta{Name: "my-network-kind"},
-					Spec: v1alpha1.PodNetworkKindSpec{
-						ImplementationType: metav1.GroupKind{Group: "example.com", Kind: "MyNetwork"},
-					},
-				},
-			},
-			initialCRDObjects: []runtime.Object{
-				&apiextensionsv1.CustomResourceDefinition{
-					ObjectMeta: metav1.ObjectMeta{Name: "mynetworks.example.com"},
-					Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-						Group: "example.com",
-						Names: apiextensionsv1.CustomResourceDefinitionNames{Kind: "MyNetwork"},
-					},
-				},
-			},
-			initialExpectedPodNetworkKindNames: []string{"my-network-kind"},
-			updateObjects: []object{
-				&apiextensionsv1.CustomResourceDefinition{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:   "mynetworks.example.com",
-						Labels: map[string]string{"updated": "true"},
-					},
-					Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-						Group: "example.com",
-						Names: apiextensionsv1.CustomResourceDefinitionNames{Kind: "MyNetwork"},
-					},
-				},
-			},
-			expectedPodNetworkKindNames: []string{"my-network-kind", "my-network-kind"},
 		},
 		{
 			name: "multiple CRDs created enqueues all corresponding names",

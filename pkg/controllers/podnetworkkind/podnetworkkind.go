@@ -112,7 +112,6 @@ func NewPodNetworkKindController(
 
 	if _, err := customResourceDefinitionInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj interface{}) { nkc.onCustomResourceDefinitionEvent(nil, obj) },
-		UpdateFunc: func(oldObj, newObj interface{}) { nkc.onCustomResourceDefinitionEvent(oldObj, newObj) },
 		DeleteFunc: func(obj interface{}) { nkc.onCustomResourceDefinitionEvent(obj, nil) },
 	}); err != nil {
 		return nil, err

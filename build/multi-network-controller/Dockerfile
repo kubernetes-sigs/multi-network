@@ -26,10 +26,13 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-extldflags -static" -o multi-network-controller ./cmd/multi-network-controller
 
-FROM alpine:3.24
+FROM gcr.io/distroless/static:nonroot
 
-USER 65532:65532
+WORKDIR /
 
 COPY --from=build /app/multi-network-controller .
 
-CMD ["./multi-network-controller", "run"]
+USER 65532:65532
+
+ENTRYPOINT ["/multi-network-controller"]
+CMD ["run"]
