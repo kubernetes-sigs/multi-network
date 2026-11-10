@@ -26,9 +26,6 @@ rules:
 - apiGroups: ["multinetwork.networking.x-k8s.io"]
   resources: ["podnetworkkinds/status"]
   verbs: ["update"]
-- apiGroups: ["authorization.k8s.io"]
-  resources: ["selfsubjectrulesreviews"]
-  verbs: ["create"]
 ---
 apiVersion: v1
 kind: ServiceAccount
