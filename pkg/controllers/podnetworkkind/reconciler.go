@@ -62,13 +62,15 @@ func NewPodNetworkKindReconciler(
 
 // Reconcile evaluates the specified PodNetworkKind and updates its ImplementationTypeReady condition.
 func (pnkr *PodNetworkKindReconciler) Reconcile(ctx context.Context, podNetworkKindName string) error {
-	podNetworkKind, err := pnkr.podNetworkKindLister.Get(podNetworkKindName)
+	pnk, err := pnkr.podNetworkKindLister.Get(podNetworkKindName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
 		return fmt.Errorf("failed to get PodNetworkKind: %w", err)
 	}
+
+	podNetworkKind := pnk.DeepCopy()
 
 	group := podNetworkKind.Spec.ImplementationType.Group
 	kind := podNetworkKind.Spec.ImplementationType.Kind
