@@ -1,29 +1,48 @@
-# Kubernetes Template Project
+# Multi-Network
 
-The Kubernetes Template Project is a template for starting new projects in the GitHub organizations owned by Kubernetes. All Kubernetes projects, at minimum, must have the following files:
+This `multi-network` repository contains the controller implementation and testing framework for the **Kubernetes Multi-Network** sub-project under [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network).
 
-- a `README.md` outlining the project goals, sponsoring sig, and community contact information
-- an `OWNERS` with the project leads listed as approvers ([docs on `OWNERS` files][owners])
-- a `CONTRIBUTING.md` outlining how to contribute to the project
-- an unmodified copy of `code-of-conduct.md` from this repo, which outlines community behavior and the consequences of breaking the code
-- a `LICENSE` which must be Apache 2.0 for code projects, or [Creative Commons 4.0] for documentation repositories, without any custom content
-- a `SECURITY_CONTACTS` with the contact points for the Product Security Team 
-  to reach out to for triaging and handling of incoming issues. They must agree to abide by the
-  [Embargo Policy](https://git.k8s.io/security/private-distributors-list.md#embargo-policy)
-  and will be removed and replaced if they violate that agreement.
+This repository provides:
+- **`multi-network-controller`:** Reconciles `PodNetworkKind` resources, verifies that underlying implementation resource types and RBAC permissions are available, manages readiness status conditions, and enforces deletion protection.
+- **Conformance Tests:** Tests to validate that pod network implementations correctly integrate with Kubernetes Dynamic Resource Allocation (DRA) and adhere to the Multi-Network specification.
 
-## Community, discussion, contribution, and support
+For the API definitions and specifications, see [kubernetes-sigs/multi-network-api](https://github.com/kubernetes-sigs/multi-network-api).
 
-Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
+For more details, see:
+- [Requirements and Use Cases](https://github.com/kubernetes-sigs/multi-network-api/blob/main/docs/requirements.md)
+- [PodNetworkKind Design Specification](https://github.com/kubernetes-sigs/multi-network-api/blob/main/docs/pod-network-kind.md)
 
-You can reach the maintainers of this project at:
+## Getting Started
 
-- [Slack](https://slack.k8s.io/)
-- [Mailing List](https://groups.google.com/a/kubernetes.io/g/dev)
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/multi-network/refs/heads/main/deployment/multi-network-controller.yaml
+```
 
-### Code of conduct
+To install the `PodNetworkKind` CRD, visit https://github.com/kubernetes-sigs/multi-network-api.
+
+Go package documentation:
+- https://pkg.go.dev/sigs.k8s.io/multi-network-api
+- https://pkg.go.dev/sigs.k8s.io/multi-network
+
+## Community, Discussion, and Support
+
+This project is maintained by Kubernetes [SIG Network](https://github.com/kubernetes/community/tree/master/sig-network) under the Multi-Network sub-project.
+
+- **API Specification:** [kubernetes-sigs/multi-network-api](https://github.com/kubernetes-sigs/multi-network-api)
+- **Meeting Notes:** [Multi-Network Meeting Notes](https://docs.google.com/document/d/1pe_0aOsI35BEsQJ-FhFH9Z_pWQcU2uqwAnOx2NIx6OY/edit?usp=sharing)
+- **Bi-weekly Meeting (Tuesdays at 06:00 PT (Pacific Time)):** [Zoom Link](https://zoom.us/j/95680858961?pwd=M1c2TTdMZHpMUUtIYXRpbjRobkNJZz09)
+- **Meeting Recordings:** [YouTube Kubernetes Community](https://www.youtube.com/@KubernetesCommunity/search?query=multi-network)
+- **Slack:** [#sig-network-multi-network](https://kubernetes.slack.com/archives/C03UT5H9KDZ) on [Kubernetes Slack](https://slack.k8s.io/)
+- **Mailing List:** [SIG Network Google Group](https://groups.google.com/a/kubernetes.io/g/sig-network)
+
+### Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for instructions on how to contribute to this repository.
+
+### Code of Conduct
 
 Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
 
-[owners]: https://git.k8s.io/community/contributors/guide/owners.md
-[Creative Commons 4.0]: https://git.k8s.io/website/LICENSE
+### License
+
+This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENSE) file for details.

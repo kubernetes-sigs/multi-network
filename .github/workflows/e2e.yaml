@@ -1,0 +1,37 @@
+name: E2E
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Create kind cluster
+        run: kind create cluster
+
+      - name: Build controller image
+        run: make build-image VERSION=e2e
+
+      - name: Load image into kind
+        run: kind load docker-image multi-network-controller:e2e
+
+      - name: Deploy controller and CRD
+        run: |
+          make install-crds
+          kubectl apply -f deployment/
+          kubectl set image deployment/multi-network-controller multi-network-controller=multi-network-controller:e2e
+          kubectl rollout status deployment/multi-network-controller --timeout=60s
+
+      - name: Run E2E tests
+        run: make test-e2e
