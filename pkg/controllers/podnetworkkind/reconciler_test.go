@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	authv1 "k8s.io/api/authorization/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsFake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 	apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions"
@@ -36,6 +37,7 @@ import (
 	"sigs.k8s.io/multi-network-api/apis/v1alpha1"
 	podNetworkKindFake "sigs.k8s.io/multi-network-api/pkg/client/clientset/versioned/fake"
 	podNetworkKindInformers "sigs.k8s.io/multi-network-api/pkg/client/informers/externalversions"
+	"sigs.k8s.io/multi-network/pkg/ruleswatcher"
 )
 
 func newReconciler(
@@ -43,13 +45,15 @@ func newReconciler(
 	t *testing.T,
 	initialPodNetworkKindObjects []runtime.Object,
 	initialCRDObjects []runtime.Object,
-) (*fake.Clientset, *podNetworkKindFake.Clientset, *apiextensionsFake.Clientset, *PodNetworkKindReconciler) {
+) (*fake.Clientset, *podNetworkKindFake.Clientset, *apiextensionsFake.Clientset, *ruleswatcher.Watcher, *PodNetworkKindReconciler) {
 	fakeKubeClient := fake.NewSimpleClientset()
 	fakeMultiNetworkClient := podNetworkKindFake.NewSimpleClientset(initialPodNetworkKindObjects...)
 	fakeApiExtensionsClient := apiextensionsFake.NewSimpleClientset(initialCRDObjects...)
 
 	networkKindInformerFactory := podNetworkKindInformers.NewSharedInformerFactory(fakeMultiNetworkClient, 0)
 	apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(fakeApiExtensionsClient, 0)
+
+	ruleWatcher := ruleswatcher.New(fakeKubeClient)
 
 	crdIndexer := apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions().Informer().GetIndexer()
 	pnkIndexer := networkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds().Informer().GetIndexer()
@@ -66,6 +70,7 @@ func newReconciler(
 		pnkIndexer,
 		networkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds().Lister(),
 		fakeMultiNetworkClient.MultinetworkV1alpha1().PodNetworkKinds(),
+		ruleWatcher,
 		fakeKubeClient,
 	)
 
@@ -74,7 +79,7 @@ func newReconciler(
 	networkKindInformerFactory.WaitForCacheSync(ctx.Done())
 	apiextensionsInformerFactory.WaitForCacheSync(ctx.Done())
 
-	return fakeKubeClient, fakeMultiNetworkClient, fakeApiExtensionsClient, reconciler
+	return fakeKubeClient, fakeMultiNetworkClient, fakeApiExtensionsClient, ruleWatcher, reconciler
 }
 
 func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
@@ -105,6 +110,22 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 				},
 			},
 		}
+	}
+
+	allowRules := func(fakeKubeClient *fake.Clientset) {
+		fakeKubeClient.PrependReactor("create", "selfsubjectrulesreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
+			return true, &authv1.SelfSubjectRulesReview{
+				Status: authv1.SubjectRulesReviewStatus{
+					ResourceRules: []authv1.ResourceRule{
+						{
+							Verbs:     []string{"list"},
+							APIGroups: []string{"example.com"},
+							Resources: []string{"mynetworks"},
+						},
+					},
+				},
+			}, nil
+		})
 	}
 
 	tests := []struct {
@@ -159,6 +180,19 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 						},
 					},
 				}
+				fakeKubeClient.PrependReactor("create", "selfsubjectrulesreviews", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, &authv1.SelfSubjectRulesReview{
+						Status: authv1.SubjectRulesReviewStatus{
+							ResourceRules: []authv1.ResourceRule{
+								{
+									Verbs:     []string{"list"},
+									APIGroups: []string{""},
+									Resources: []string{"pods"},
+								},
+							},
+						},
+					}, nil
+				})
 			},
 			podNetworkKindName: "native-net",
 			expectedPodNetworkKind: func() *v1alpha1.PodNetworkKind {
@@ -178,9 +212,26 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 			}(),
 		},
 		{
+			name:                         "missing RBAC",
+			initialPodNetworkKindObjects: []runtime.Object{podNetworkKindObj()},
+			initialCRDObjects:            []runtime.Object{readyCRD()},
+			podNetworkKindName:           "example-com-mynetwork",
+			expectedPodNetworkKind: func() *v1alpha1.PodNetworkKind {
+				nk := podNetworkKindObj()
+				nk.Status.Conditions = []metav1.Condition{{
+					Type:    v1alpha1.PodNetworkKindConditionImplementationTypeReady,
+					Status:  metav1.ConditionFalse,
+					Reason:  v1alpha1.PodNetworkKindReasonMissingRBAC,
+					Message: "Insufficient permissions to access the Resources",
+				}}
+				return nk
+			}(),
+		},
+		{
 			name:                         "compliant",
 			initialPodNetworkKindObjects: []runtime.Object{podNetworkKindObj()},
 			initialCRDObjects:            []runtime.Object{readyCRD()},
+			fakeKubeClientSetup:          allowRules,
 			podNetworkKindName:           "example-com-mynetwork",
 			expectedPodNetworkKind: func() *v1alpha1.PodNetworkKind {
 				nk := podNetworkKindObj()
@@ -209,8 +260,9 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 					return nk
 				}(),
 			},
-			initialCRDObjects:  []runtime.Object{readyCRD()},
-			podNetworkKindName: "newer-pnk",
+			initialCRDObjects:   []runtime.Object{readyCRD()},
+			fakeKubeClientSetup: allowRules,
+			podNetworkKindName:  "newer-pnk",
 			expectedPodNetworkKind: func() *v1alpha1.PodNetworkKind {
 				nk := podNetworkKindObj()
 				nk.Name = "newer-pnk"
@@ -240,8 +292,9 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 					return nk
 				}(),
 			},
-			initialCRDObjects:  []runtime.Object{readyCRD()},
-			podNetworkKindName: "older-pnk",
+			initialCRDObjects:   []runtime.Object{readyCRD()},
+			fakeKubeClientSetup: allowRules,
+			podNetworkKindName:  "older-pnk",
 			expectedPodNetworkKind: func() *v1alpha1.PodNetworkKind {
 				nk := podNetworkKindObj()
 				nk.Name = "older-pnk"
@@ -271,8 +324,9 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 					return nk
 				}(),
 			},
-			initialCRDObjects:  []runtime.Object{readyCRD()},
-			podNetworkKindName: "pnk-a",
+			initialCRDObjects:   []runtime.Object{readyCRD()},
+			fakeKubeClientSetup: allowRules,
+			podNetworkKindName:  "pnk-a",
 			expectedPodNetworkKind: func() *v1alpha1.PodNetworkKind {
 				nk := podNetworkKindObj()
 				nk.Name = "pnk-a"
@@ -299,7 +353,8 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 				}}
 				return nk
 			}()},
-			initialCRDObjects: []runtime.Object{readyCRD()},
+			initialCRDObjects:   []runtime.Object{readyCRD()},
+			fakeKubeClientSetup: allowRules,
 			fakeMultiNetworkClientSetup: func(fakeMultiNetworkClient *podNetworkKindFake.Clientset) {
 				fakeMultiNetworkClient.PrependReactor("update", "podnetworkkinds", func(action k8stesting.Action) (bool, runtime.Object, error) {
 					t.Errorf("UpdateStatus should not have been called when status did not change")
@@ -323,6 +378,7 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 			name:                         "failed status update",
 			initialPodNetworkKindObjects: []runtime.Object{podNetworkKindObj()},
 			initialCRDObjects:            []runtime.Object{readyCRD()},
+			fakeKubeClientSetup:          allowRules,
 			fakeMultiNetworkClientSetup: func(fakeMultiNetworkClient *podNetworkKindFake.Clientset) {
 				fakeMultiNetworkClient.PrependReactor("update", "podnetworkkinds", func(action k8stesting.Action) (bool, runtime.Object, error) {
 					return true, nil, fmt.Errorf("update failed")
@@ -366,7 +422,7 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			fakeKubeClient, fakeMultiNetworkClient, _, nkr := newReconciler(ctx, t, tt.initialPodNetworkKindObjects, tt.initialCRDObjects)
+			fakeKubeClient, fakeMultiNetworkClient, _, ruleWatcher, nkr := newReconciler(ctx, t, tt.initialPodNetworkKindObjects, tt.initialCRDObjects)
 
 			if tt.fakeKubeClientSetup != nil {
 				tt.fakeKubeClientSetup(fakeKubeClient)
@@ -377,6 +433,8 @@ func TestPodNetworkKindReconciler_Reconcile(t *testing.T) {
 			if tt.customReconcilerSetup != nil {
 				tt.customReconcilerSetup(nkr)
 			}
+
+			_ = ruleWatcher.Sync(ctx)
 
 			err := nkr.Reconcile(ctx, tt.podNetworkKindName)
 			if (err != nil) != tt.wantErr {
@@ -407,11 +465,13 @@ func TestNewPodNetworkKindReconciler(t *testing.T) {
 		podNetworkKindInformerFactory := podNetworkKindInformers.NewSharedInformerFactory(fakeMultiNetworkClient, 0)
 		apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(fakeApiExtensionsClient, 0)
 
+		ruleWatcher := ruleswatcher.New(fakeKubeClient)
 		reconciler := NewPodNetworkKindReconciler(
 			apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions().Informer().GetIndexer(),
 			podNetworkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds().Informer().GetIndexer(),
 			podNetworkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds().Lister(),
 			fakeMultiNetworkClient.MultinetworkV1alpha1().PodNetworkKinds(),
+			ruleWatcher,
 			fakeKubeClient,
 		)
 		if reconciler == nil {
@@ -423,7 +483,7 @@ func TestNewPodNetworkKindReconciler(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		_, _, _, reconciler := newReconciler(ctx, t, nil, nil)
+		_, _, _, _, reconciler := newReconciler(ctx, t, nil, nil)
 		indexFunc := reconciler.customResourceDefinitionIndexer.GetIndexers()[groupKindCustomResourceDefinitionIndex]
 		if indexFunc == nil {
 			t.Fatal("expected groupKind index function to be registered")

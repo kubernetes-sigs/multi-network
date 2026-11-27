@@ -22,8 +22,10 @@ import (
 	"sync"
 	"time"
 
+	authv1 "k8s.io/api/authorization/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	v1apiextensionsinformers "k8s.io/apiextensions-apiserver/pkg/client/informers/externalversions/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -35,6 +37,7 @@ import (
 	v1alpha1client "sigs.k8s.io/multi-network-api/pkg/client/clientset/versioned/typed/apis/v1alpha1"
 	v1alpha1networkkindinformers "sigs.k8s.io/multi-network-api/pkg/client/informers/externalversions/apis/v1alpha1"
 	v1alpha1networkkindlisters "sigs.k8s.io/multi-network-api/pkg/client/listers/apis/v1alpha1"
+	"sigs.k8s.io/multi-network/pkg/ruleswatcher"
 )
 
 const (
@@ -49,6 +52,7 @@ type reconciler interface {
 type PodNetworkKindController struct {
 	customResourceDefinitionSynced cache.InformerSynced
 	podNetworkKindSynced           cache.InformerSynced
+	ruleWatcherSynced              cache.InformerSynced
 
 	podNetworkKindIndexer cache.Indexer
 	podNetworkKindLister  v1alpha1networkkindlisters.PodNetworkKindLister
@@ -63,12 +67,14 @@ func NewPodNetworkKindController(
 	podNetworkKindInformer v1alpha1networkkindinformers.PodNetworkKindInformer,
 	customResourceDefinitionInformer v1apiextensionsinformers.CustomResourceDefinitionInformer,
 	networkKindClient v1alpha1client.PodNetworkKindInterface,
+	ruleWatcher *ruleswatcher.Watcher,
 	client clientset.Interface,
 ) (*PodNetworkKindController, error) {
 
 	nkc := &PodNetworkKindController{
 		customResourceDefinitionSynced: customResourceDefinitionInformer.Informer().HasSynced,
 		podNetworkKindSynced:           podNetworkKindInformer.Informer().HasSynced,
+		ruleWatcherSynced:              ruleWatcher.HasSynced,
 		podNetworkKindIndexer:          podNetworkKindInformer.Informer().GetIndexer(),
 		podNetworkKindLister:           podNetworkKindInformer.Lister(),
 		podNetworkKindQueue: workqueue.NewTypedRateLimitingQueueWithConfig(
@@ -92,6 +98,7 @@ func NewPodNetworkKindController(
 		nkc.podNetworkKindIndexer,
 		nkc.podNetworkKindLister,
 		networkKindClient,
+		ruleWatcher,
 		client,
 	)
 
@@ -110,6 +117,10 @@ func NewPodNetworkKindController(
 		return nil, err
 	}
 
+	ruleWatcher.AddEventHandler(func(oldRules, newRules []authv1.ResourceRule) {
+		nkc.enqueueAllPodNetworkKinds()
+	})
+
 	return nkc, nil
 }
 
@@ -121,6 +132,18 @@ func (pnkc *PodNetworkKindController) onPodNetworkKindEvent(obj interface{}) {
 
 	pnkc.podNetworkKindQueue.Add(networkKind.Name)
 	pnkc.enqueuePodNetworkKindsForGroupKind(networkKind.Spec.ImplementationType.Group, networkKind.Spec.ImplementationType.Kind)
+}
+
+func (pnkc *PodNetworkKindController) enqueueAllPodNetworkKinds() {
+	networkKinds, err := pnkc.podNetworkKindLister.List(labels.Everything())
+	if err != nil {
+		klog.Error(err, "Failed to list PodNetworkKinds")
+		return
+	}
+
+	for _, nk := range networkKinds {
+		pnkc.podNetworkKindQueue.Add(nk.Name)
+	}
 }
 
 func extractPodNetworkKind(obj interface{}) (*v1alpha1.PodNetworkKind, bool) {
@@ -191,7 +214,7 @@ func (pnkc *PodNetworkKindController) enqueuePodNetworkKindsForGroupKind(group, 
 
 // Run starts the controller workers after waiting for informer caches to sync.
 func (pnkc *PodNetworkKindController) Run(ctx context.Context, workers int) error {
-	if !cache.WaitForNamedCacheSyncWithContext(ctx, pnkc.podNetworkKindSynced, pnkc.customResourceDefinitionSynced) {
+	if !cache.WaitForNamedCacheSyncWithContext(ctx, pnkc.podNetworkKindSynced, pnkc.customResourceDefinitionSynced, pnkc.ruleWatcherSynced) {
 		return fmt.Errorf("failed to wait for caches to sync")
 	}
 

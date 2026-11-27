@@ -38,6 +38,7 @@ import (
 	"sigs.k8s.io/multi-network-api/apis/v1alpha1"
 	podNetworkKindFake "sigs.k8s.io/multi-network-api/pkg/client/clientset/versioned/fake"
 	podNetworkKindInformers "sigs.k8s.io/multi-network-api/pkg/client/informers/externalversions"
+	"sigs.k8s.io/multi-network/pkg/ruleswatcher"
 )
 
 // fakeReconciler is a simple implementation of the reconciler interface for testing purposes.
@@ -82,10 +83,14 @@ func newController(
 	podNetworkKindInformerFactory := podNetworkKindInformers.NewSharedInformerFactory(fakeMultiNetworkClient, 0)
 	apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(fakeApiExtensionsClient, 0)
 
+	ruleWatcher := ruleswatcher.New(fakeKubeClient)
+	_ = ruleWatcher.Sync(ctx)
+
 	controller, err := NewPodNetworkKindController(
 		podNetworkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds(),
 		apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions(),
 		fakeMultiNetworkClient.MultinetworkV1alpha1().PodNetworkKinds(),
+		ruleWatcher,
 		fakeKubeClient,
 	)
 	if err != nil {
@@ -517,10 +522,13 @@ func TestNewPodNetworkKindController(t *testing.T) {
 		podNetworkKindInformerFactory := podNetworkKindInformers.NewSharedInformerFactory(fakeMultiNetworkClient, 0)
 		apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(fakeApiExtensionsClient, 0)
 
+		ruleWatcher := ruleswatcher.New(fakeKubeClient)
+
 		controller, err := NewPodNetworkKindController(
 			podNetworkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds(),
 			apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions(),
 			fakeMultiNetworkClient.MultinetworkV1alpha1().PodNetworkKinds(),
+			ruleWatcher,
 			fakeKubeClient,
 		)
 		if err != nil {
@@ -555,10 +563,13 @@ func TestNewPodNetworkKindController(t *testing.T) {
 			t.Fatalf("failed to add indexer: %v", err)
 		}
 
+		ruleWatcher := ruleswatcher.New(fakeKubeClient)
+
 		controller, err := NewPodNetworkKindController(
 			podNetworkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds(),
 			crdInformer,
 			fakeMultiNetworkClient.MultinetworkV1alpha1().PodNetworkKinds(),
+			ruleWatcher,
 			fakeKubeClient,
 		)
 		if err == nil {
@@ -587,10 +598,13 @@ func TestNewPodNetworkKindController(t *testing.T) {
 			t.Fatalf("failed to add indexer: %v", err)
 		}
 
+		ruleWatcher := ruleswatcher.New(fakeKubeClient)
+
 		controller, err := NewPodNetworkKindController(
 			pnkInformer,
 			apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions(),
 			fakeMultiNetworkClient.MultinetworkV1alpha1().PodNetworkKinds(),
+			ruleWatcher,
 			fakeKubeClient,
 		)
 		if err == nil {
@@ -724,6 +738,28 @@ func TestProcessNextWorkItem(t *testing.T) {
 			t.Errorf("expected NumRequeues to be 1 after AddRateLimited, got %d", controller.podNetworkKindQueue.NumRequeues("error-pnk"))
 		}
 	})
+}
+
+func TestEnqueueAllPodNetworkKinds(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	initialPNK1 := &v1alpha1.PodNetworkKind{ObjectMeta: metav1.ObjectMeta{Name: "pnk-1"}}
+	initialPNK2 := &v1alpha1.PodNetworkKind{ObjectMeta: metav1.ObjectMeta{Name: "pnk-2"}}
+
+	_, _, _, controller, _ := newController(ctx, t, []runtime.Object{initialPNK1, initialPNK2}, nil)
+
+	// Clear items from queue
+	for controller.podNetworkKindQueue.Len() > 0 {
+		item, _ := controller.podNetworkKindQueue.Get()
+		controller.podNetworkKindQueue.Done(item)
+	}
+
+	controller.enqueueAllPodNetworkKinds()
+
+	if controller.podNetworkKindQueue.Len() != 2 {
+		t.Fatalf("expected queue length 2, got %d", controller.podNetworkKindQueue.Len())
+	}
 }
 
 func TestEnqueuePodNetworkKindsForGroupKind(t *testing.T) {
