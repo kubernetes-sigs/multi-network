@@ -32,6 +32,7 @@ import (
 	podNetworkKindClientset "sigs.k8s.io/multi-network-api/pkg/client/clientset/versioned"
 	podNetworkKindInformers "sigs.k8s.io/multi-network-api/pkg/client/informers/externalversions"
 	"sigs.k8s.io/multi-network/pkg/controllers/podnetworkkind"
+	"sigs.k8s.io/multi-network/pkg/ruleswatcher"
 )
 
 const (
@@ -92,10 +93,13 @@ func (ro *runOptions) run(ctx context.Context) error {
 	networkKindInformerFactory := podNetworkKindInformers.NewSharedInformerFactory(podNetworkKindClient, defaultInformerResyncPeriod)
 	apiextensionsInformerFactory := apiextensionsinformers.NewSharedInformerFactory(apiextensionsClient, defaultInformerResyncPeriod)
 
+	ruleWatcher := ruleswatcher.New(kubeClient)
+
 	podNetworkKindController, err := podnetworkkind.NewPodNetworkKindController(
 		networkKindInformerFactory.Multinetwork().V1alpha1().PodNetworkKinds(),
 		apiextensionsInformerFactory.Apiextensions().V1().CustomResourceDefinitions(),
 		podNetworkKindClient.MultinetworkV1alpha1().PodNetworkKinds(),
+		ruleWatcher,
 		kubeClient,
 	)
 	if err != nil {
@@ -104,6 +108,13 @@ func (ro *runOptions) run(ctx context.Context) error {
 
 	networkKindInformerFactory.Start(ctx.Done())
 	apiextensionsInformerFactory.Start(ctx.Done())
+
+	go func() {
+		err = ruleWatcher.Run(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			klog.FromContext(ctx).Error(err, "failed to run rule watcher")
+		}
+	}()
 
 	go func() {
 		err = podNetworkKindController.Run(ctx, 1)

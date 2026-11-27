@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/multi-network-api/apis/v1alpha1"
 	v1alpha1client "sigs.k8s.io/multi-network-api/pkg/client/clientset/versioned/typed/apis/v1alpha1"
 	v1alpha1networkkindlisters "sigs.k8s.io/multi-network-api/pkg/client/listers/apis/v1alpha1"
+	"sigs.k8s.io/multi-network/pkg/ruleswatcher"
 )
 
 // PodNetworkKindReconciler reconciles PodNetworkKind resources to ensure their implementation types exist and are ready.
@@ -40,6 +41,7 @@ type PodNetworkKindReconciler struct {
 	podNetworkKindIndexer           cache.Indexer
 	podNetworkKindLister            v1alpha1networkkindlisters.PodNetworkKindLister
 	podNetworkKindClient            v1alpha1client.PodNetworkKindInterface
+	ruleWatcher                     *ruleswatcher.Watcher
 	clientset                       clientset.Interface
 }
 
@@ -49,6 +51,7 @@ func NewPodNetworkKindReconciler(
 	podNetworkKindIndexer cache.Indexer,
 	podNetworkKindLister v1alpha1networkkindlisters.PodNetworkKindLister,
 	podNetworkKindClient v1alpha1client.PodNetworkKindInterface,
+	ruleWatcher *ruleswatcher.Watcher,
 	clientset clientset.Interface,
 ) *PodNetworkKindReconciler {
 	return &PodNetworkKindReconciler{
@@ -56,6 +59,7 @@ func NewPodNetworkKindReconciler(
 		podNetworkKindIndexer:           podNetworkKindIndexer,
 		podNetworkKindLister:            podNetworkKindLister,
 		podNetworkKindClient:            podNetworkKindClient,
+		ruleWatcher:                     ruleWatcher,
 		clientset:                       clientset,
 	}
 }
@@ -165,6 +169,10 @@ func (pnkr *PodNetworkKindReconciler) setImplementationTypeReadyCondition(podNet
 		status = metav1.ConditionFalse
 		reason = v1alpha1.PodNetworkKindReasonResourceTypeNotFound
 		message = "Resource Type not found"
+	case !pnkr.ruleWatcher.HasPermission("list", group, plural):
+		status = metav1.ConditionFalse
+		reason = v1alpha1.PodNetworkKindReasonMissingRBAC
+		message = "Insufficient permissions to access the Resources"
 	case conflict:
 		status = metav1.ConditionFalse
 		reason = v1alpha1.PodNetworkKindReasonTypeConflict

@@ -23,6 +23,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,12 @@ var _ = Describe("PodNetworkKind ImplementationTypeReady Condition", func() {
 			plural := "presencenets"
 			resourceTypeName := plural + "." + group
 			pnkName := "e2e-resource-type-presence"
+
+			By("granting RBAC permissions to the controller in advance")
+			grantRBAC(ctx, "e2e-presence-reader", group, plural)
+			DeferCleanup(func(ctx context.Context) {
+				deleteRBAC(ctx, "e2e-presence-reader")
+			})
 
 			pnk := &v1alpha1.PodNetworkKind{
 				ObjectMeta: metav1.ObjectMeta{Name: pnkName},
@@ -94,6 +101,78 @@ var _ = Describe("PodNetworkKind ImplementationTypeReady Condition", func() {
 		})
 	})
 
+	Context("RBAC permissions (MissingRBAC)", func() {
+		It("should report False when RBAC is missing, turn True when granted, and turn back False when revoked", func(ctx context.Context) {
+			group := "resourcetype.rbac.e2e.example.com"
+			kind := "RbacNet"
+			plural := "rbacnets"
+			resourceTypeName := plural + "." + group
+			pnkName := "e2e-resource-type-rbac"
+			rbacName := "e2e-rbac-test-reader"
+
+			By("creating a compliant Resource Type without granting RBAC")
+			createCRD(ctx, resourceTypeName, group, kind, plural)
+			DeferCleanup(func(ctx context.Context) {
+				_ = apiextensionsClient.ApiextensionsV1().CustomResourceDefinitions().Delete(ctx, resourceTypeName, metav1.DeleteOptions{})
+			})
+
+			pnk := &v1alpha1.PodNetworkKind{
+				ObjectMeta: metav1.ObjectMeta{Name: pnkName},
+				Spec: v1alpha1.PodNetworkKindSpec{
+					ImplementationType: metav1.GroupKind{Group: group, Kind: kind},
+				},
+			}
+
+			By("creating the PodNetworkKind referencing the Resource Type without RBAC")
+			_, err := multinetworkClient.PodNetworkKinds().Create(ctx, pnk, metav1.CreateOptions{})
+			Expect(err).NotTo(HaveOccurred(), "failed to create PodNetworkKind")
+
+			DeferCleanup(func(ctx context.Context) {
+				_ = multinetworkClient.PodNetworkKinds().Delete(ctx, pnkName, metav1.DeleteOptions{})
+			})
+
+			By("waiting for ImplementationTypeReady=False with reason MissingRBAC")
+			Eventually(func(g Gomega) {
+				updated, err := multinetworkClient.PodNetworkKinds().Get(ctx, pnkName, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(updated.Status.Conditions).NotTo(BeEmpty())
+
+				cond := meta.FindStatusCondition(updated.Status.Conditions, v1alpha1.PodNetworkKindConditionImplementationTypeReady)
+				g.Expect(cond).NotTo(BeNil(), "ImplementationTypeReady condition not found")
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(v1alpha1.PodNetworkKindReasonMissingRBAC))
+				g.Expect(cond.Message).To(Equal("Insufficient permissions to access the Resources"))
+			}).WithContext(ctx).WithTimeout(Timeout).WithPolling(Polling).Should(Succeed())
+
+			By("granting RBAC permissions to the controller")
+			grantRBAC(ctx, rbacName, group, plural)
+
+			By("waiting for ImplementationTypeReady to turn True with reason Compliant")
+			Eventually(func(g Gomega) {
+				updated, err := multinetworkClient.PodNetworkKinds().Get(ctx, pnkName, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, v1alpha1.PodNetworkKindConditionImplementationTypeReady)
+				g.Expect(cond).NotTo(BeNil(), "ImplementationTypeReady condition not found")
+				g.Expect(cond.Status).To(Equal(metav1.ConditionTrue))
+				g.Expect(cond.Reason).To(Equal(v1alpha1.PodNetworkKindReasonCompliant))
+			}).WithContext(ctx).WithTimeout(Timeout).WithPolling(Polling).Should(Succeed())
+
+			By("revoking RBAC permissions to make the condition unmet again")
+			deleteRBAC(ctx, rbacName)
+
+			By("waiting for ImplementationTypeReady to turn back False with reason MissingRBAC")
+			Eventually(func(g Gomega) {
+				updated, err := multinetworkClient.PodNetworkKinds().Get(ctx, pnkName, metav1.GetOptions{})
+				g.Expect(err).NotTo(HaveOccurred())
+				cond := meta.FindStatusCondition(updated.Status.Conditions, v1alpha1.PodNetworkKindConditionImplementationTypeReady)
+				g.Expect(cond).NotTo(BeNil(), "ImplementationTypeReady condition not found")
+				g.Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+				g.Expect(cond.Reason).To(Equal(v1alpha1.PodNetworkKindReasonMissingRBAC))
+				g.Expect(cond.Message).To(Equal("Insufficient permissions to access the Resources"))
+			}).WithContext(ctx).WithTimeout(Timeout).WithPolling(Polling).Should(Succeed())
+		})
+	})
+
 	Context("Type Conflict (TypeConflict)", func() {
 		It("should report TypeConflict on newer PodNetworkKind and Compliant on older PodNetworkKind, and turn True when conflict is deleted", func(ctx context.Context) {
 			group := "resourcetype.conflict.e2e.example.com"
@@ -102,6 +181,13 @@ var _ = Describe("PodNetworkKind ImplementationTypeReady Condition", func() {
 			resourceTypeName := plural + "." + group
 			pnkOlderName := "e2e-type-conflict-older"
 			pnkNewerName := "e2e-type-conflict-newer"
+			rbacName := "e2e-conflict-reader"
+
+			By("granting RBAC permissions to the controller in advance")
+			grantRBAC(ctx, rbacName, group, plural)
+			DeferCleanup(func(ctx context.Context) {
+				deleteRBAC(ctx, rbacName)
+			})
 
 			By("creating the compliant Resource Type")
 			createCRD(ctx, resourceTypeName, group, kind, plural)
@@ -179,6 +265,44 @@ var _ = Describe("PodNetworkKind ImplementationTypeReady Condition", func() {
 		})
 	})
 })
+
+func grantRBAC(ctx context.Context, name, group, resource string) {
+	cr := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{group},
+				Resources: []string{resource},
+				Verbs:     []string{"list"},
+			},
+		},
+	}
+	_, err := kubeClient.RbacV1().ClusterRoles().Create(ctx, cr, metav1.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+
+	crb := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: name + "-binding"},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     name,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "multi-network-controller-service-account",
+				Namespace: "default",
+			},
+		},
+	}
+	_, err = kubeClient.RbacV1().ClusterRoleBindings().Create(ctx, crb, metav1.CreateOptions{})
+	Expect(err).NotTo(HaveOccurred())
+}
+
+func deleteRBAC(ctx context.Context, name string) {
+	_ = kubeClient.RbacV1().ClusterRoleBindings().Delete(ctx, name+"-binding", metav1.DeleteOptions{})
+	_ = kubeClient.RbacV1().ClusterRoles().Delete(ctx, name, metav1.DeleteOptions{})
+}
 
 func buildCRD(name, group, kind, plural string) *apiextensionsv1.CustomResourceDefinition {
 	names := apiextensionsv1.CustomResourceDefinitionNames{
